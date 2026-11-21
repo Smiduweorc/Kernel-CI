@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [master, dev]
+    paths-ignore: ["**.md"]
+  pull_request:
+    branches: [master]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & test the scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      kernels: ${{ steps.kernels.outputs.kernels }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install pinned tools
+        uses: jdx/mise-action@v5
+
+      # checkpatch comes from the newest kernel's tarball.
+      - name: Restore kernel tarballs
+        uses: actions/cache@v6
+        with:
+          path: .kci/dl
+          key: tarballs-${{ hashFiles('ci/kernels') }}
+
+      - name: Lint
+        run: scripts/tasks.sh lint
+
+      - name: Test
+        run: scripts/tasks.sh test
+
+      - name: List the kernels
+        id: kernels
+        run: echo "kernels=$(scripts/tasks.sh kernels | jq -Rnc '[inputs]')" >>"$GITHUB_OUTPUT"
+
+  vm:
+    name: Linux ${{ matrix.kernel }} (${{ matrix.toolchain }})
+    needs: lint
+    runs-on: ubuntu-24.04
+    # A cold kernel build is most of this. With the build cached, a run takes
+    # a few minutes.
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel: ${{ fromJSON(needs.lint.outputs.kernels) }}
+        toolchain: [gcc, clang]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install the kernel toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libelf-dev libssl-dev \
+            clang lld llvm sparse \
+            busybox-static cpio kmod qemu-system-x86
+
+      # The runners have KVM, but /dev/kvm is root-only until a udev rule
+      # opens it up.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Restore the kernel tarball
+        uses: actions/cache@v6
+        with:
+          path: .kci/dl/linux-${{ matrix.kernel }}.tar.xz
+          key: tarball-${{ matrix.kernel }}
+
+      # Restored and saved in separate steps so a build that succeeds is kept
+      # even when the tests after it fail.
+      - name: Restore the kernel build
+        id: build-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .kci/build/${{ matrix.kernel }}-${{ matrix.toolchain }}
+          key: build-${{ matrix.kernel }}-${{ matrix.toolchain }}-${{ env.ImageOS }}-${{ hashFiles('ci/kernel.config') }}
+
+      - name: Build the kernel
+        run: scripts/tasks.sh kernel ${{ matrix.kernel }} ${{ matrix.toolchain }}
+
+      - name: Save the kernel build
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .kci/build/${{ matrix.kernel }}-${{ matrix.toolchain }}
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
+      - name: Build the modules and run the tests in a VM
+        run: scripts/tasks.sh vm ${{ matrix.kernel }} ${{ matrix.toolchain }}
+
+      - name: Upload the VM logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vm-logs-${{ matrix.kernel }}-${{ matrix.toolchain }}
+          path: .kci/vm/${{ matrix.kernel }}-${{ matrix.toolchain }}/*.log
+          if-no-files-found: ignore

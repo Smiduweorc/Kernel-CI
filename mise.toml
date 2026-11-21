@@ -1,0 +1,8 @@
+# Pinned tooling. `mise install` fetches these as single binaries. The kernel
+# toolchain (compilers, sparse, qemu, busybox) comes from the system package
+# manager instead; the README lists it.
+[tools]
+lefthook = "2"
+git-cliff = "2"
+shellcheck = "latest"
+shfmt = "latest"

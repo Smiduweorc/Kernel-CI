@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
+obj-m += hello.o
+
+# Not obj-$(CONFIG_KUNIT): with CONFIG_KUNIT=y that is obj-y, which an
+# out-of-tree build cannot link into anything.
+ifdef CONFIG_KUNIT
+obj-m += hello_kunit.o
+endif

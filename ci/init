@@ -1,0 +1,42 @@
+#!/bin/sh
+# PID 1 of the test VM, run by busybox. Loads every KUnit module, runs every
+# module's test.sh, and reports on ttyS1 in the format scripts/check-log.sh
+# reads. The kernel console has ttyS0 to itself, so kernel messages cannot
+# land in the middle of a result line.
+
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+exec >/dev/ttyS1 2>&1
+
+# KUnit runs the suites while the module loads, so the ring buffer holds the
+# whole KTAP report by the time modprobe returns.
+while read -r name; do
+	echo "kci: begin kunit $name"
+	dmesg -c >/dev/null
+	status=0
+	modprobe "$name" || status=$?
+	dmesg -c
+	if [ "$status" -eq 0 ]; then
+		modprobe -r "$name" || status=$?
+	fi
+	echo "kci: end $status"
+done </kci/kunit
+
+for test in /kci/tests/*.sh; do
+	[ -f "$test" ] || continue
+	name=${test##*/}
+	echo "kci: begin test ${name%.sh}"
+	status=0
+	sh "$test" || status=$?
+	echo "kci: end $status"
+done
+
+echo "kci: tainted $(cat /proc/sys/kernel/tainted)"
+echo "kci: done"
+
+# Closing the last descriptor on a serial tty waits until the UART has sent
+# everything; poweroff -f straight after the echo can cut off the last lines.
+exec >/dev/null 2>&1
+poweroff -f

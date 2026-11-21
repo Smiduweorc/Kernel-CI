@@ -1,0 +1,7 @@
+# The kernels CI builds and boots every module against, one per line:
+# version, then the SHA-256 of linux-<version>.tar.xz from the sha256sums.asc
+# next to it on cdn.kernel.org. A tarball that does not match is deleted and
+# the run fails.
+6.12.118 08308460320e852ac0745b2be3c7ae1cd81bdad713506ed7d817ba1ec9e1a5a5
+6.18.64 020d45510c539972e6f14c5c71566878d3b7ef56fb082b3e09134f2ebaade562
+7.3.5 8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990

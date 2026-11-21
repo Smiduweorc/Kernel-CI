@@ -1,0 +1,13 @@
+# Kernel downloads, builds, VM images and logs.
+/.kci/
+
+# Out-of-tree module build output.
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+modules.order
+Module.symvers
+
+*.log
